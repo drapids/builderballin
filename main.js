@@ -571,7 +571,8 @@ function createWindow() {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true }
   });
   win.loadFile(path.join(__dirname, 'app', 'index.html'));
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => win && win.show());
+  setTimeout(() => win && !win.isVisible() && win.show(), 4000);
   const f = fileArg(process.argv);
   if (f) win.webContents.once('did-finish-load', () => setTimeout(() => send('openFile', f), 2500));
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -695,32 +696,49 @@ function fileArg(argv) {
   return (argv || []).find((a) => /\.hbmap$/i.test(a) && exists(a)) || null;
 }
 
-if (!app.requestSingleInstanceLock()) app.quit();
+const solo = app.requestSingleInstanceLock();
+if (!solo) app.exit(0);
 app.on('second-instance', (_e, argv) => {
-  if (!win) return;
+  if (!win) {
+    createWindow();
+    return;
+  }
   if (win.isMinimized()) win.restore();
+  win.show();
   win.focus();
   const f = fileArg(argv);
   if (f) send('openFile', f);
 });
 
-app.whenReady().then(() => {
-  loadStore();
-  if (!store.gameDir) {
-    const w = autoFind();
-    if (w) {
-      store.gameDir = w;
-      saveStore();
-    }
-  }
+const attempt = (fn) => {
   try {
-    syncMod();
-  } catch {}
-  watchDownloads();
+    fn();
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+app.whenReady().then(() => {
+  if (!solo) return;
+  attempt(loadStore);
   createWindow();
-  checkProcess();
-  setInterval(checkProcess, 2500);
-  setInterval(pollState, 400);
+  setTimeout(() => {
+    attempt(() => {
+      if (!store.gameDir) {
+        const w = autoFind();
+        if (w) {
+          store.gameDir = w;
+          saveStore();
+          push();
+        }
+      }
+    });
+    attempt(() => syncMod());
+    attempt(watchDownloads);
+    attempt(checkProcess);
+    setInterval(() => attempt(checkProcess), 2500);
+    setInterval(() => attempt(pollState), 400);
+  }, 300);
 });
 
 app.on('window-all-closed', () => app.quit());
