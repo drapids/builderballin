@@ -1,5 +1,6 @@
 import { PIECE, defaultParams, localParts, pieceColor, initialScale, marblePoints, GEM, MARBLE_R, speedRange, DOMINUS } from './pieces.js';
 import { assetParts } from './voxels.js';
+import { colliderChunks } from './collide.js';
 import { axesFromRot, rotFromAxes, applyAxes, composeAxes, add, hadamard } from './ue.js';
 
 export const FORMAT = 'builderballin';
@@ -167,12 +168,18 @@ export function flatten(map) {
     }
     if (piece.kind === 'import' && map.assets && map.assets[o.p.ref] && map.assets[o.p.ref].kind === 'mesh') {
       const a = map.assets[o.p.ref];
+      const solid = o.look.collide !== false;
+      const chunks = solid ? colliderChunks(a.collider) : [];
+      const proxy = solid && !chunks.length && !!(a.fallback && a.fallback.boxes);
       a.sections.forEach((sec, i) => {
-        build.parts.push({ ...common, id: `${o.id}:m${i}`, kind: 'procmesh', group: o.id, pos: o.pos.slice(), rot: o.rot.slice(), scale: o.scale.slice(), color: a.palette[sec.c] || '#9a9a96', sec: { b: sec.b, p: sec.p, n: sec.n, i: sec.i }, two: !!a.twoSided, ice: o.look.ice, hidden: !o.look.visible, collide: o.look.collide });
+        build.parts.push({ ...common, id: `${o.id}:m${i}`, kind: 'procmesh', group: o.id, pos: o.pos.slice(), rot: o.rot.slice(), scale: o.scale.slice(), color: a.palette[sec.c] || '#9a9a96', sec: { b: sec.b, p: sec.p, n: sec.n, i: sec.i }, two: !!a.twoSided, ice: o.look.ice, hidden: !o.look.visible, collide: solid && !chunks.length && !proxy });
+      });
+      chunks.forEach((d, i) => {
+        build.parts.push({ ...common, id: `${o.id}:c${i}`, kind: 'collider', group: o.id, pos: o.pos.slice(), rot: o.rot.slice(), scale: o.scale.slice(), boxes: d, ice: o.look.ice, hidden: true, collide: true });
       });
       if (a.fallback && a.fallback.boxes) {
         assetParts({ palette: a.fallback.palette, boxes: a.fallback.boxes }).forEach((lp, i) => {
-          build.parts.push({ ...common, id: `${o.id}:f${i}`, kind: 'shape', shape: 'cube', fallbackFor: o.id, pos: add(o.pos, applyAxes(axes, hadamard(lp.pos, o.scale))), rot: o.rot.slice(), scale: hadamard(lp.scale, o.scale), color: lp.color, mat: null, ice: o.look.ice, hidden: !o.look.visible, collide: o.look.collide });
+          build.parts.push({ ...common, id: `${o.id}:f${i}`, kind: 'shape', shape: 'cube', fallbackFor: o.id, proxy, pos: add(o.pos, applyAxes(axes, hadamard(lp.pos, o.scale))), rot: o.rot.slice(), scale: hadamard(lp.scale, o.scale), color: lp.color, mat: null, ice: o.look.ice, hidden: !o.look.visible, collide: o.look.collide });
         });
       }
       continue;

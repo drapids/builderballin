@@ -1522,6 +1522,58 @@ kbd {
   cursor: grab;
 }
 
+.imp-cmp {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(20, 19, 42, 0.82);
+  backdrop-filter: blur(6px);
+}
+
+.imp-cmp button {
+  border: 0;
+  background: none;
+  color: #aaa6d8;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.imp-cmp button:hover {
+  color: #fff;
+}
+
+.imp-cmp button.on {
+  background: #2a7cff;
+  color: #fff;
+}
+
+.imp-scale {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  margin: 0;
+  max-width: 70%;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(20, 19, 42, 0.82);
+  color: #e6e3ff;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+}
+
+.imp-scale:empty {
+  display: none;
+}
+
 .imp-busy {
   position: absolute;
   left: 10px;

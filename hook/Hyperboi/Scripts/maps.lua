@@ -280,10 +280,121 @@ local function decodeSection(sec, two)
     return verts, tris, norms
 end
 
+local spawnCollider
 local IDENTITY = { Translation = { X = 0, Y = 0, Z = 0 }, Rotation = { X = 0, Y = 0, Z = 0, W = 1 }, Scale3D = { X = 1, Y = 1, Z = 1 } }
 
+local function boxList(data)
+    local raw = unb64(data)
+    local unpack = string.unpack
+    local list = {}
+    for k = 0, #raw // 40 - 1 do
+        local x, y, z, qx, qy, qz, qw, sx, sy, sz = unpack("<ffffffffff", raw, k * 40 + 1)
+        list[k + 1] = { Translation = { X = x, Y = y, Z = z }, Rotation = { X = qx, Y = qy, Z = qz, W = qw }, Scale3D = { X = sx, Y = sy, Z = sz } }
+    end
+    return list
+end
+
+local function solidify(comp)
+    safe(function() comp:SetCollisionProfileName(FName("BlockAll"), false) end)
+    safe(function() comp:SetCollisionEnabled(3) end)
+    safe(function() comp:SetCollisionResponseToAllChannels(2) end)
+end
+
+spawnCollider = function(world, part, loc, rot)
+    local smaClass = cls("/Script/Engine.StaticMeshActor")
+    local cube = asset(SHAPES.cube)
+    if not smaClass or not cube or not part.boxes then return nil end
+    local list = boxList(part.boxes)
+    if #list == 0 then return nil end
+    local ism = not (cur and cur.ismDead) and cls("/Script/Engine.InstancedStaticMeshComponent")
+    if ism then
+        local actor = spawnActor(world, smaClass, loc, rot)
+        if not actor then return nil end
+        local root = meshComp(actor)
+        if root then safe(function() root:SetMobility(2) end) end
+        local okc, comp = pcall(function() return actor:AddComponentByClass(ism, false, IDENTITY, false) end)
+        if okc and valid(comp) then
+            safe(function() comp:SetMobility(2) end)
+            safe(function() comp:SetStaticMesh(cube) end)
+            solidify(comp)
+            pcall(function() comp:AddInstances(list, false, false, false) end)
+            local count = safe(function() return comp:GetInstanceCount() end) or 0
+            if count < #list then
+                for k = count + 1, #list do
+                    if not pcall(function() comp:AddInstance(list[k], false) end) then break end
+                end
+                count = safe(function() return comp:GetInstanceCount() end) or 0
+            end
+            if count > 0 then
+                solidify(comp)
+                safe(function() comp:RecreatePhysicsState() end)
+                safe(function() comp:SetHiddenInGame(true, false) end)
+                if not cur.colLogged then
+                    cur.colLogged = true
+                    log(("collision boxes ok: %d of %d"):format(count, #list))
+                end
+                applyLook(actor, comp, part)
+                return actor
+            end
+        end
+        safe(function() actor:K2_DestroyActor() end)
+        if cur then cur.ismDead = true end
+        log("instanced collision failed, using separate boxes")
+    end
+    local holder = spawnActor(world, smaClass, loc, rot)
+    if not holder then return nil end
+    local s = part.scale or { 1, 1, 1 }
+    local base = quat(rot)
+    local function qmul(a, b)
+        return {
+            X = a.W * b.X + a.X * b.W + a.Y * b.Z - a.Z * b.Y,
+            Y = a.W * b.Y - a.X * b.Z + a.Y * b.W + a.Z * b.X,
+            Z = a.W * b.Z + a.X * b.Y - a.Y * b.X + a.Z * b.W,
+            W = a.W * b.W - a.X * b.X - a.Y * b.Y - a.Z * b.Z,
+        }
+    end
+    local function qrot(q, v)
+        local u = { X = q.X, Y = q.Y, Z = q.Z }
+        local tx = 2 * (u.Y * v.Z - u.Z * v.Y)
+        local ty = 2 * (u.Z * v.X - u.X * v.Z)
+        local tz = 2 * (u.X * v.Y - u.Y * v.X)
+        return {
+            X = v.X + q.W * tx + (u.Y * tz - u.Z * ty),
+            Y = v.Y + q.W * ty + (u.Z * tx - u.X * tz),
+            Z = v.Z + q.W * tz + (u.X * ty - u.Y * tx),
+        }
+    end
+    GS = valid(GS) and GS or StaticFindObject("/Script/Engine.Default__GameplayStatics")
+    local who = ctx.getChar()
+    cur.extra = cur.extra or {}
+    for _, b in ipairs(list) do
+        local lp = { X = b.Translation.X * s[1], Y = b.Translation.Y * s[2], Z = b.Translation.Z * s[3] }
+        local wp = qrot(base, lp)
+        local xf = { Rotation = qmul(base, b.Rotation), Translation = { X = loc.X + wp.X, Y = loc.Y + wp.Y, Z = loc.Z + wp.Z }, Scale3D = { X = b.Scale3D.X * s[1], Y = b.Scale3D.Y * s[2], Z = b.Scale3D.Z * s[3] } }
+        local a = safe(function() return GS:BeginDeferredActorSpawnFromClass(who, smaClass, xf, 1, nil, 1) end)
+        if valid(a) then
+            safe(function() GS:FinishSpawningActor(a, xf, 1) end)
+            local c = meshComp(a)
+            if c then
+                safe(function() c:SetMobility(2) end)
+                safe(function() c:SetStaticMesh(cube) end)
+                solidify(c)
+            end
+            safe(function() a:SetActorHiddenInGame(true) end)
+            cur.extra[#cur.extra + 1] = a
+        end
+    end
+    applyLook(holder, nil, part)
+    return holder
+end
+
 local function spawnPart(world, part)
-    if part.fallbackFor and not (cur and cur.meshDead and cur.meshDead[part.fallbackFor]) then return "skip" end
+    local dead = cur and cur.meshDead and cur.meshDead[part.fallbackFor or part.group]
+    if part.fallbackFor and not dead then
+        if not part.proxy then return "skip" end
+        part = setmetatable({ hidden = true, collide = true }, { __index = part })
+    end
+    if part.kind == "collider" and dead then return "skip" end
     local loc = W(part.pos)
     local r = part.rot or { 0, 0, 0 }
     local rot = { Pitch = r[1], Yaw = r[2], Roll = r[3] }
@@ -375,6 +486,9 @@ local function spawnPart(world, part)
             if valid(mi) then safe(function() mi:SetVectorParameterValue(FName("Color"), hexColor(part.color or "#9a9a96", true)) end) end
         end
         applyLook(actor, comp, part)
+    elseif part.kind == "collider" then
+        actor = spawnCollider(world, part, loc, rot)
+        if not actor then return nil end
     elseif part.kind == "bp" then
         local c = asset(part.path, "_C")
         if not c then return nil end
@@ -659,6 +773,9 @@ function M.unload(silent)
     end
     for _, sp in ipairs(cur.spawned) do
         if alive(sp) then safe(function() sp.actor:K2_DestroyActor() end) end
+    end
+    for _, a in ipairs(cur.extra or {}) do
+        if valid(a) then safe(function() a:K2_DestroyActor() end) end
     end
     for _, m in ipairs(cur.marbles) do killMarble(m) end
     for _, sp in ipairs(cur.spawners) do for _, m in ipairs(sp.live) do killMarble(m) end end

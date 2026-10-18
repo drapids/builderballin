@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from '../vendor/OrbitControls.js';
 import { TransformControls } from '../vendor/TransformControls.js';
 import { PIECES, PIECE, CATS, GLAZES, ZONE_COLORS, localParts, defaultParams, GEMS, GEM, MARBLE_R, M, marblePoints, MODE_INFO, pickGem, speedRange, DOMINUS } from './pieces.js';
-import { makeSky, makeEnvironment, gemMaterial, MARBLE_GEO, woodMaterial, finishRings, playerFigure, arrowMesh, MOON_DIR } from './look.js';
+import { makeSky, makeEnvironment, gemMaterial, MARBLE_GEO, woodMaterial, finishRings, playerFigure, diamondGuy, arrowMesh, MOON_DIR } from './look.js';
 import { blankMap, newObject, uid, flatten, exportMap, importMap, validate, blankAnim, MOVE_DEFAULT, SPIN_DEFAULT, SWING_DEFAULT, BLINK_DEFAULT, DIFFICULTIES, GEM_NAMES, axisVector } from './mapfile.js';
 import { axesFromRot, toThree, fromThree, scaleToThree, scaleFromThree, quatFromRot, rotFromQuat, quatFromAxes, add } from './ue.js';
 import { evalAnim } from './anim.js';
@@ -10,6 +10,7 @@ import { MESHES } from './meshes.js';
 import { animate, fadeIn, SPRINGS, Spring, springCurve } from './spring.js';
 import { TEMPLATES } from './templates.js';
 import { loadSource, buildAsset, DEFAULTS, ACCEPT, unb64, blocksFromMesh } from './importers.js';
+import { collidersFromMesh } from './collide.js';
 import { openSearch } from './search.js';
 import { createHome, createGame } from './home.js';
 import { assetCount } from './voxels.js';
@@ -1665,13 +1666,32 @@ async function importModal(files, nameHint) {
   if (nameHint && /^(scene|model|untitled|[0-9a-f]{20,})$/i.test(src.name)) src.name = nameHint;
   const opt = { ...DEFAULTS[src.kind] };
   if (src.kind === 'model' && src.levelish) Object.assign(opt, { level: true, res: 128, size: 60000, solid: false, quality: 85 });
-  const body = html(`<div class="imp"><div class="imp-view"><canvas></canvas><div class="imp-busy" hidden>Working on it</div></div><div class="imp-side"><div class="imp-opts"></div><p class="imp-stat"></p></div></div>`);
+  const body = html(`<div class="imp"><div class="imp-view"><canvas></canvas><div class="imp-cmp"><button data-cmp="all" class="on">Next to you</button><button data-cmp="near">Up close</button><button data-cmp="off">Hide</button></div><p class="imp-scale"></p><div class="imp-busy" hidden>Working on it</div></div><div class="imp-side"><div class="imp-opts"></div><p class="imp-stat"></p></div></div>`);
   let asset = null;
   let busy = false;
   let again = false;
   let preview = null;
   const opts = $('.imp-opts', body);
   const stat = $('.imp-stat', body);
+  const scaleEl = $('.imp-scale', body);
+  const times = (n) => (n >= 100 ? Math.round(n).toLocaleString() : n >= 10 ? String(Math.round(n)) : String(Math.round(n * 10) / 10));
+  const scaleNote = (a) => {
+    if (!a || !a.size) {
+      scaleEl.textContent = '';
+      return;
+    }
+    const tall = a.size[2] / 180;
+    const across = Math.max(a.size[0], a.size[1]) / (MARBLE_R * 2);
+    const h = tall < 0.95 ? `${Math.round(tall * 100)}% of your height` : tall < 1.1 ? 'about as tall as you' : `${times(tall)} of you tall`;
+    const w = across < 0.95 ? 'smaller than a marble' : `${times(across)} marble${across >= 1.05 ? 's' : ''} across`;
+    scaleEl.textContent = `${h}, ${w}`;
+  };
+  $$('.imp-cmp button', body).forEach((b) =>
+    b.addEventListener('click', () => {
+      $$('.imp-cmp button', body).forEach((x) => x.classList.toggle('on', x === b));
+      if (preview) preview.setMode(b.dataset.cmp);
+    })
+  );
   const rebuild = () => {
     if (busy) {
       again = true;
@@ -1683,6 +1703,7 @@ async function importModal(files, nameHint) {
       try {
         asset = buildAsset(src, opt);
         const st = importStats(asset);
+        scaleNote(asset);
         stat.textContent = st.text + (st.heavy ? (asset.kind === 'mesh' ? '. That is a lot of triangles, it could lag in game. Turn the quality down if it does.' : '. That is a lot of parts, the game takes longer to load it. Lower the detail or colours if it lags.') : '.');
         stat.classList.toggle('warn', st.heavy);
         if (preview) preview.show(asset);
@@ -1800,6 +1821,11 @@ async function importModal(files, nameHint) {
             const fb = buildAsset(src, { ...opt, build: 'blocks', res: src.kind === 'bsp' || opt.level ? 96 : 40, colors: Math.min(16, opt.colors), solid: src.kind !== 'bsp' && !opt.level });
             asset.fallback = { palette: fb.palette, boxes: fb.boxes };
           } catch {}
+          try {
+            asset.collider = collidersFromMesh(asset) || false;
+          } catch {
+            asset.collider = false;
+          }
         }
         state.map.assets = state.map.assets || {};
         state.map.assets[ref] = asset;
@@ -1834,6 +1860,17 @@ function importPreview(cv) {
   ctl.autoRotateSpeed = 1.2;
   let holder = null;
   let framed = false;
+  let mode = 'all';
+  let fly = null;
+  const guy = diamondGuy();
+  const ball = new THREE.Mesh(MARBLE_GEO, gemMaterial('mint'));
+  const you = labelSprite('You', '#2a7cff');
+  you.center.set(0.5, 0);
+  you.position.y = 215;
+  guy.add(you);
+  const buddies = new THREE.Group();
+  buddies.add(guy, ball);
+  sc2.add(buddies);
   const size = () => {
     const w = cv.clientWidth || 400;
     const h = cv.clientHeight || 300;
@@ -1841,23 +1878,52 @@ function importPreview(cv) {
     cam.aspect = w / h;
     cam.updateProjectionMatrix();
   };
+  const aim = (c, rad, smooth) => {
+    const dir = framed ? cam.position.clone().sub(ctl.target) : new THREE.Vector3(1, 0.75, 1.15);
+    framed = true;
+    const fit = rad / Math.sin((35 * Math.PI) / 360) / Math.min(1, cam.aspect);
+    const to = c.clone().add(dir.normalize().multiplyScalar(fit * 1.12));
+    cam.near = rad / 100;
+    cam.far = rad * 200;
+    cam.updateProjectionMatrix();
+    if (smooth) fly = { start: performance.now(), fromPos: cam.position.clone(), fromTgt: ctl.target.clone(), toPos: to, toTgt: c.clone() };
+    else {
+      fly = null;
+      ctl.target.copy(c);
+      cam.position.copy(to);
+    }
+  };
+  const place = (smooth) => {
+    if (!holder) return;
+    const box = new THREE.Box3().setFromObject(holder);
+    const c = box.getCenter(new THREE.Vector3());
+    const rad = Math.max(1, box.getSize(new THREE.Vector3()).length() / 2);
+    const gap = 120 + Math.min(rad * 0.01, 600);
+    guy.position.set(box.max.x + gap, box.min.y, c.z);
+    ball.position.set(box.max.x + gap + 260 + MARBLE_R, box.min.y + MARBLE_R, c.z);
+    buddies.visible = mode !== 'off';
+    ctl.autoRotate = mode !== 'near';
+    if (mode === 'near') {
+      aim(guy.position.clone().add(new THREE.Vector3(0, 100, 0)), 320, smooth);
+      return;
+    }
+    if (mode === 'all') box.union(new THREE.Box3().setFromObject(buddies));
+    const all = box.getCenter(new THREE.Vector3());
+    aim(all, Math.max(1, box.getSize(new THREE.Vector3()).length() / 2), smooth);
+  };
   const show = (a) => {
     if (holder) sc2.remove(holder);
     holder = null;
+    buddies.visible = false;
     if (!a) return;
     holder = assetMesh(a);
     holder.children.forEach((c) => c.userData.edge && (c.visible = false));
     sc2.add(holder);
-    const box = new THREE.Box3().setFromObject(holder);
-    const c = box.getCenter(new THREE.Vector3());
-    const rad = Math.max(1, box.getSize(new THREE.Vector3()).length() / 2);
-    const dir = framed ? cam.position.clone().sub(ctl.target) : new THREE.Vector3(1, 0.75, 1.15);
-    framed = true;
-    ctl.target.copy(c);
-    cam.position.copy(c).add(dir.normalize().multiplyScalar((rad / Math.sin((35 * Math.PI) / 360)) * 1.12));
-    cam.near = rad / 100;
-    cam.far = rad * 100;
-    cam.updateProjectionMatrix();
+    place(false);
+  };
+  const setMode = (m) => {
+    mode = m;
+    place(true);
   };
   const frame = () => {
     if (!cv.isConnected) {
@@ -1866,6 +1932,13 @@ function importPreview(cv) {
       return;
     }
     size();
+    if (fly) {
+      const t = Math.min(1, (performance.now() - fly.start) / 650);
+      const e = 1 - Math.pow(1 - t, 3);
+      cam.position.lerpVectors(fly.fromPos, fly.toPos, e);
+      ctl.target.lerpVectors(fly.fromTgt, fly.toTgt, e);
+      if (t >= 1) fly = null;
+    }
     ctl.update();
     r.render(sc2, cam);
     requestAnimationFrame(frame);
@@ -1877,14 +1950,17 @@ function importPreview(cv) {
     t.width = 200;
     t.height = 150;
     const g = t.getContext('2d');
+    const was = buddies.visible;
+    buddies.visible = false;
     r.render(sc2, cam);
+    buddies.visible = was;
     const w = cv.width;
     const h = cv.height;
     const s = Math.min(w / 4, h / 3);
     g.drawImage(cv, (w - s * 4) / 2, (h - s * 3) / 2, s * 4, s * 3, 0, 0, 200, 150);
     return t.toDataURL('image/jpeg', 0.82);
   };
-  return { show, thumb };
+  return { show, thumb, setMode };
 }
 
 function updateTrayNote(hover) {
@@ -3168,10 +3244,19 @@ function mapThumb(map, w = 480, h = 300) {
 
 function ensureFallbacks(map) {
   for (const a of Object.values(map.assets || {})) {
-    if (a.kind !== 'mesh' || a.fallback) continue;
-    try {
-      a.fallback = blocksFromMesh(a, a.source === 'level' ? 96 : 40);
-    } catch {}
+    if (a.kind !== 'mesh') continue;
+    if (!a.fallback) {
+      try {
+        a.fallback = blocksFromMesh(a, a.source === 'level' ? 96 : 40);
+      } catch {}
+    }
+    if (a.collider === undefined) {
+      try {
+        a.collider = collidersFromMesh(a) || false;
+      } catch {
+        a.collider = false;
+      }
+    }
   }
 }
 
