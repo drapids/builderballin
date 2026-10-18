@@ -162,45 +162,129 @@
     });
   };
 
+  const G = window.HB_GUY;
+  const zbuf = new Float32Array(W * H);
+  const mask = new Uint8Array(W * H);
+  const RAMP = [C.g5, C.g4, C.g3, C.g2, C.g1];
+  const SCALE = 0.27;
+  const FEET = { x: 72, y: GROUND - 1 };
+  const YAW = -0.38;
+  const cy = Math.cos(YAW);
+  const sy = Math.sin(YAW);
+  const LIGHT = (() => {
+    const v = [0.55, -0.55, 0.62];
+    const l = Math.hypot(v[0], v[1], v[2]);
+    return v.map((k) => k / l);
+  })();
+  let posed = G ? new Float32Array(G.count * 3) : null;
+  let proj = G ? new Float32Array(G.count * 3) : null;
+  const project = (x, y, z, out, o) => {
+    const rx = x * cy - y * sy;
+    const ry = x * sy + y * cy;
+    out[o] = FEET.x + ry * SCALE;
+    out[o + 1] = FEET.y - z * SCALE;
+    out[o + 2] = -rx;
+  };
+  const tmp = new Float32Array(3);
+  const toScreen = (p) => {
+    project(p[0], p[1], p[2], tmp, 0);
+    return [tmp[0], tmp[1]];
+  };
+  const raster = (pose) => {
+    G.pose(pose, posed);
+    for (let v = 0; v < G.count; v++) project(posed[v * 3], posed[v * 3 + 1], posed[v * 3 + 2], proj, v * 3);
+    zbuf.fill(Infinity);
+    mask.fill(0);
+    const idx = G.index;
+    for (let t = 0; t < idx.length; t += 3) {
+      const a = idx[t] * 3;
+      const b = idx[t + 1] * 3;
+      const c = idx[t + 2] * 3;
+      const ux = posed[b] - posed[a], uy = posed[b + 1] - posed[a + 1], uz = posed[b + 2] - posed[a + 2];
+      const vx = posed[c] - posed[a], vy = posed[c + 1] - posed[a + 1], vz = posed[c + 2] - posed[a + 2];
+      let nx = uy * vz - uz * vy;
+      let ny = uz * vx - ux * vz;
+      let nz = ux * vy - uy * vx;
+      const nl = Math.hypot(nx, ny, nz) || 1;
+      nx /= nl;
+      ny /= nl;
+      nz /= nl;
+      const cx2 = nx * cy - ny * sy;
+      if (cx2 < -0.05) continue;
+      const lit = Math.max(0, cx2 * LIGHT[0] + (nx * sy + ny * cy) * LIGHT[1] + nz * LIGHT[2]);
+      const shade = Math.min(0.999, 0.04 + lit * 0.9);
+      const x0 = proj[a], y0 = proj[a + 1], z0 = proj[a + 2];
+      const x1 = proj[b], y1 = proj[b + 1], z1 = proj[b + 2];
+      const x2 = proj[c], y2 = proj[c + 1], z2 = proj[c + 2];
+      const area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+      if (Math.abs(area) < 1e-6) continue;
+      const minx = Math.max(0, Math.floor(Math.min(x0, x1, x2)));
+      const maxx = Math.min(W - 1, Math.ceil(Math.max(x0, x1, x2)));
+      const miny = Math.max(0, Math.floor(Math.min(y0, y1, y2)));
+      const maxy = Math.min(H - 1, Math.ceil(Math.max(y0, y1, y2)));
+      for (let py = miny; py <= maxy; py++)
+        for (let px2 = minx; px2 <= maxx; px2++) {
+          const qx = px2 + 0.5;
+          const qy = py + 0.5;
+          const w0 = ((x1 - qx) * (y2 - qy) - (x2 - qx) * (y1 - qy)) / area;
+          const w1 = ((x2 - qx) * (y0 - qy) - (x0 - qx) * (y2 - qy)) / area;
+          const w2 = 1 - w0 - w1;
+          if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+          const z = w0 * z0 + w1 * z1 + w2 * z2;
+          const k = py * W + px2;
+          if (z >= zbuf[k]) continue;
+          zbuf[k] = z;
+          mask[k] = 1;
+          const lv = shade * 4;
+          const lo = Math.floor(lv);
+          px[k] = dith(px2, py, lv - lo) ? RAMP[Math.min(4, lo + 1)] : RAMP[lo];
+        }
+    }
+    for (let y = 1; y < H - 1; y++)
+      for (let x = 1; x < W - 1; x++) {
+        const k = y * W + x;
+        if (mask[k]) continue;
+        if (mask[k - 1] || mask[k + 1] || mask[k - W] || mask[k + W]) px[k] = C.eye;
+      }
+  };
+
   const guy = (t, ang) => {
-    const bob = Math.round(Math.sin(t * 5.2) * 0.6);
-    const sq = squash > 0 ? Math.round(squash * 2) : 0;
-    const cx = 64;
-    const top = 50 + bob + sq;
-    const mid = 68 + bob;
-    const bot = 86;
-    const hw = 12 + (sq ? 1 : 0);
-    line(cx - 4, bot - 1, cx - 5, GROUND - 1, C.g5, 2);
-    line(cx + 4, bot - 1, cx + 5, GROUND - 1, C.g5, 2);
-    rect(cx - 8, GROUND - 1, 5, 1, C.eye);
-    rect(cx + 4, GROUND - 1, 5, 1, C.eye);
-    poly([[cx, top], [cx + hw, mid], [cx, bot], [cx - hw, mid]], 0, (x, y) => {
-      const left = x < cx;
-      const upper = y < mid;
-      if (upper) return left ? (dith(x, y, (mid - y) / (mid - top)) ? C.g1 : C.g2) : C.g3;
-      return left ? C.g4 : dith(x, y, (y - mid) / (bot - mid)) ? C.g5 : C.g4;
-    });
-    poly([[cx - 4, top + 7], [cx + 4, top + 7], [cx, top + 1]], C.g1);
-    rect(cx - 1, mid - 1, 3, 1, C.g2);
-    const blink = Math.sin(t * 1.7) > 0.985;
-    rect(cx + 1, mid - 6, 2, blink ? 1 : 3, C.eye);
-    rect(cx + 6, mid - 6, 2, blink ? 1 : 3, C.eye);
-    line(cx - 9, mid + 2, cx - 13, mid + 7, C.g4, 2);
-    const hx = PIVOT.x + Math.cos(ang) * 9;
-    const hy = PIVOT.y + bob + Math.sin(ang) * 9;
-    line(cx + 7, mid - 2, hx, hy, C.g4, 2);
-    const ex = PIVOT.x + Math.cos(ang) * 37;
-    const ey = PIVOT.y + bob + Math.sin(ang) * 37;
-    line(hx, hy, ex, ey, C.wood, 2);
-    const nx = -Math.sin(ang);
-    const ny = Math.cos(ang);
-    const fx = Math.cos(ang);
-    const fy = Math.sin(ang);
+    if (!G) return;
+    const sq = squash > 0 ? squash : 0;
+    const breathe = Math.sin(t * 5.2) * 0.5 + 0.5;
+    const pose = {
+      lDown: 1.25,
+      rDown: 1.18,
+      lElbow: 0.35 + breathe * 0.08,
+      rElbow: 0.25,
+      lSwing: 0.15 - sq * 0.1,
+      rSwing: Math.PI / 2 - ang - 0.25,
+      lHip: -0.22,
+      rHip: 0.26,
+      lKnee: 0.22 + sq * 0.25,
+      rKnee: 0.12 + sq * 0.2,
+      lean: 0.06 + (ang > -0.6 ? 0.08 : -0.03) + sq * 0.06,
+      lift: -sq * 5 - breathe * 1.2
+    };
+    raster(pose);
+    const hand = toScreen(G.hand(pose, 1));
+    const sh = toScreen([18, 0, 150 + pose.lift]);
+    let dx = hand[0] - sh[0];
+    let dy = hand[1] - sh[1];
+    const dl = Math.hypot(dx, dy) || 1;
+    dx /= dl;
+    dy /= dl;
+    const ex = hand[0] + dx * 24;
+    const ey = hand[1] + dy * 24;
+    line(hand[0] - dx * 3, hand[1] - dy * 3, ex, ey, C.wood, 2);
+    rect(Math.round(hand[0]) - 1, Math.round(hand[1]) - 1, 3, 3, C.g2);
+    const nx = -dy;
+    const ny = dx;
     const head = [
-      [ex - nx * 5 - fx * 2, ey - ny * 5 - fy * 2],
-      [ex + nx * 5 - fx * 2, ey + ny * 5 - fy * 2],
-      [ex + nx * 5 + fx * 4, ey + ny * 5 + fy * 4],
-      [ex - nx * 5 + fx * 4, ey - ny * 5 + fy * 4]
+      [ex - nx * 5 - dx * 2, ey - ny * 5 - dy * 2],
+      [ex + nx * 5 - dx * 2, ey + ny * 5 - dy * 2],
+      [ex + nx * 5 + dx * 4, ey + ny * 5 + dy * 4],
+      [ex - nx * 5 + dx * 4, ey - ny * 5 + dy * 4]
     ];
     poly(head, 0, (x, y) => (((x - ex) * nx + (y - ey) * ny) < 0 ? C.steel : C.steelLo));
   };

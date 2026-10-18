@@ -1680,7 +1680,7 @@ async function importModal(files, nameHint) {
       scaleEl.textContent = '';
       return;
     }
-    const tall = a.size[2] / 180;
+    const tall = a.size[2] / ((globalThis.HB_GUY && globalThis.HB_GUY.height) || 187);
     const across = Math.max(a.size[0], a.size[1]) / (MARBLE_R * 2);
     const h = tall < 0.95 ? `${Math.round(tall * 100)}% of your height` : tall < 1.1 ? 'about as tall as you' : `${times(tall)} of you tall`;
     const w = across < 0.95 ? 'smaller than a marble' : `${times(across)} marble${across >= 1.05 ? 's' : ''} across`;
@@ -1904,7 +1904,7 @@ function importPreview(cv) {
     buddies.visible = mode !== 'off';
     ctl.autoRotate = mode !== 'near';
     if (mode === 'near') {
-      aim(guy.position.clone().add(new THREE.Vector3(0, 100, 0)), 320, smooth);
+      aim(guy.position.clone().add(new THREE.Vector3(0, 100, 0)), 240, smooth);
       return;
     }
     if (mode === 'all') box.union(new THREE.Box3().setFromObject(buddies));

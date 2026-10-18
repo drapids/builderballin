@@ -278,37 +278,40 @@ export function finishRings(ghost) {
   return g;
 }
 
-const guyMats = {
-  gem: new THREE.MeshStandardMaterial({ color: '#5fc8ff', emissive: '#123a7a', emissiveIntensity: 0.35, roughness: 0.18, metalness: 0.15, flatShading: true }),
-  leg: new THREE.MeshStandardMaterial({ color: '#1b4fd6', roughness: 0.5 }),
-  dark: new THREE.MeshStandardMaterial({ color: '#0b1233', roughness: 0.7 })
-};
+const guyMat = new THREE.MeshStandardMaterial({ color: '#a9e2ff', emissive: '#16357a', emissiveIntensity: 0.3, roughness: 0.14, metalness: 0.2, flatShading: true });
+let guyGeo = null;
+
+function guyGeometry() {
+  if (guyGeo) return guyGeo;
+  const G = globalThis.HB_GUY;
+  const p = G.pose(G.REST);
+  const pos = new Float32Array(p.length);
+  for (let i = 0; i < p.length; i += 3) {
+    pos[i] = p[i];
+    pos[i + 1] = p[i + 2];
+    pos[i + 2] = p[i + 1];
+  }
+  const idx = new Uint16Array(G.index.length);
+  for (let i = 0; i < idx.length; i += 3) {
+    idx[i] = G.index[i];
+    idx[i + 1] = G.index[i + 2];
+    idx[i + 2] = G.index[i + 1];
+  }
+  guyGeo = new THREE.BufferGeometry();
+  guyGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  guyGeo.setIndex(new THREE.BufferAttribute(idx, 1));
+  guyGeo.computeVertexNormals();
+  return guyGeo;
+}
 
 export function diamondGuy() {
   const g = new THREE.Group();
-  const legH = 45;
-  const half = 67.5;
-  const wide = 45;
-  const body = new THREE.Mesh(new THREE.OctahedronGeometry(1, 0), guyMats.gem);
-  body.scale.set(wide, half, wide);
-  body.rotation.y = Math.PI / 4;
-  body.position.y = legH + half;
-  g.add(body);
-  const c = wide / Math.SQRT2;
-  for (const side of [-1, 1]) {
-    const tilt = Math.atan2(10, legH + 13);
-    const leg = new THREE.Mesh(new THREE.CylinderGeometry(6, 7, Math.hypot(10, legH + 13), 10), guyMats.leg);
-    leg.position.set(0, (legH + 13) / 2, side * 9);
-    leg.rotation.x = -side * tilt;
-    const foot = new THREE.Mesh(new THREE.BoxGeometry(24, 6, 14), guyMats.dark);
-    foot.position.set(6, 3, side * 16);
-    const yy = 0.42;
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(5.5, 10, 8), guyMats.dark);
-    eye.scale.set(0.45, 1.25, 1);
-    eye.position.set(c * (1 - yy) + 1, legH + half + half * yy, side * 13);
-    g.add(leg, foot, eye);
-  }
-  g.userData.height = legH + half * 2;
+  if (!globalThis.HB_GUY) return g;
+  const m = new THREE.Mesh(guyGeometry(), guyMat);
+  m.rotation.y = Math.PI / 2;
+  m.castShadow = true;
+  g.add(m);
+  g.userData.height = globalThis.HB_GUY.height;
   return g;
 }
 
