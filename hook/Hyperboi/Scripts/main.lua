@@ -541,7 +541,7 @@ end
 local function writeState(o, status)
     local L = {}
     table.insert(L, "status=" .. status)
-    table.insert(L, "ver=10")
+    table.insert(L, "ver=11")
     table.insert(L, "tick=" .. tick)
     table.insert(L, "clock=" .. string.format("%.2f", os.clock()))
     if o.char then

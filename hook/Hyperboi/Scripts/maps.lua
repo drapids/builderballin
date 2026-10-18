@@ -338,9 +338,15 @@ local function spawnPart(world, part)
         local ok, v, t, n = pcall(decodeSection, part.sec, part.two)
         if not ok then return fail("bad mesh data: " .. tostring(v)) end
         local col = part.collide ~= false
-        local okm, err = pcall(function() comp:CreateMeshSection_LinearColor(0, v, t, n, nil, nil, nil, col) end)
+        safe(function() comp.bUseAsyncCooking = false end)
+        safe(function() comp.bUseComplexAsSimpleCollision = true end)
+        if col then
+            safe(function() comp:SetCollisionProfileName(FName("BlockAll"), false) end)
+            safe(function() comp:SetCollisionEnabled(3) end)
+        end
+        local okm, err = pcall(function() comp:CreateMeshSection(0, v, t, n, nil, nil, nil, col) end)
         if not okm then
-            local ok2, err2 = pcall(function() comp:CreateMeshSection(0, v, t, n, nil, nil, nil, col) end)
+            local ok2, err2 = pcall(function() comp:CreateMeshSection_LinearColor(0, v, t, n, nil, nil, nil, nil, nil, nil, col, false) end)
             if not ok2 then return fail("CreateMeshSection errored: " .. tostring(err) .. " / " .. tostring(err2)) end
         end
         local secs = safe(function() return comp:GetNumSections() end)
@@ -349,9 +355,17 @@ local function spawnPart(world, part)
             cur.meshLogged = true
             log(("real shape ok: %d verts, %d indices, sections %s"):format(#v, #t, tostring(secs)))
         end
-        if part.collide ~= false then
+        if col then
             safe(function() comp:SetCollisionProfileName(FName("BlockAll"), true) end)
             safe(function() comp:SetCollisionEnabled(3) end)
+            safe(function() comp:SetCollisionResponseToAllChannels(2) end)
+            safe(function() comp:RecreatePhysicsState() end)
+            if not cur.colLogged then
+                cur.colLogged = true
+                local ce = safe(function() return comp:GetCollisionEnabled() end)
+                local bs = safe(function() return comp.ProcMeshBodySetup end)
+                log(("real shape collision: enabled %s, body %s"):format(tostring(ce), tostring(valid(bs))))
+            end
         else
             safe(function() comp:SetCollisionEnabled(0) end)
         end
