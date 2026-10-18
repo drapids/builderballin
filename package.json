@@ -1,0 +1,27 @@
+{
+  "name": "builderballin",
+  "productName": "Builderballin",
+  "version": "1.0.0",
+  "description": "Map editor for Hyperballin. Build a course and play it in the real game.",
+  "main": "main.js",
+  "author": "drapids",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.builderballin.editor",
+    "productName": "Builderballin",
+    "directories": { "output": "dist" },
+    "files": ["main.js", "preload.js", "app/**/*", "assets/**/*"],
+    "extraResources": [{ "from": "hook", "to": "hook" }],
+    "fileAssociations": [{ "ext": "hbmap", "name": "Builderballin map", "role": "Editor" }],
+    "win": { "target": "portable", "icon": "assets/icon.png" },
+    "portable": { "artifactName": "Builderballin.exe" }
+  }
+}
