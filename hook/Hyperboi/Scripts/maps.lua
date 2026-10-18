@@ -38,10 +38,16 @@ local function valid(o)
 end
 
 local function log(msg)
+    local line = os.date("%H:%M:%S ") .. tostring(msg) .. "\n"
     local f = io.open(ctx.bridgeDir .. "/maps_log.txt", "a")
     if f then
-        f:write(os.date("%H:%M:%S ") .. tostring(msg) .. "\n")
+        f:write(line)
         f:close()
+    end
+    local g = io.open(ctx.modDir .. "/../../../../../../hyperboi_log.txt", "a")
+    if g then
+        g:write(line)
+        g:close()
     end
 end
 
@@ -277,6 +283,7 @@ end
 local IDENTITY = { Translation = { X = 0, Y = 0, Z = 0 }, Rotation = { X = 0, Y = 0, Z = 0, W = 1 }, Scale3D = { X = 1, Y = 1, Z = 1 } }
 
 local function spawnPart(world, part)
+    if part.fallbackFor and not (cur and cur.meshDead and cur.meshDead[part.fallbackFor]) then return "skip" end
     local loc = W(part.pos)
     local r = part.rot or { 0, 0, 0 }
     local rot = { Pitch = r[1], Yaw = r[2], Roll = r[3] }
@@ -305,33 +312,46 @@ local function spawnPart(world, part)
         end
         applyLook(actor, comp, part)
     elseif part.kind == "procmesh" then
+        if part.group and cur and cur.meshDead and cur.meshDead[part.group] then return nil end
         local smaClass = cls("/Script/Engine.StaticMeshActor")
         local pmc = cls("/Script/ProceduralMeshComponent.ProceduralMeshComponent")
-        if not smaClass or not pmc or not part.sec then return nil end
+        local fail = function(why)
+            if cur then
+                cur.meshDead = cur.meshDead or {}
+                if part.group then cur.meshDead[part.group] = true end
+            end
+            log("real shape failed: " .. why .. (part.group and ", using blocks instead" or ""))
+            if actor then safe(function() actor:K2_DestroyActor() end) end
+            return nil
+        end
+        if not smaClass then return fail("no StaticMeshActor class") end
+        if not pmc then return fail("the game has no ProceduralMeshComponent class") end
+        if not part.sec then return fail("no mesh data in the map file") end
         actor = spawnActor(world, smaClass, loc, rot)
-        if not actor then return nil end
+        if not actor then return fail("couldn't spawn the holder actor") end
         local root = meshComp(actor)
         if root then safe(function() root:SetMobility(2) end) end
-        local comp = safe(function() return actor:AddComponentByClass(pmc, false, IDENTITY, false) end)
-        if not valid(comp) then
-            safe(function() actor:K2_DestroyActor() end)
-            log("couldn't add a mesh component, the game may not have procedural meshes")
-            return nil
-        end
+        local okc, comp = pcall(function() return actor:AddComponentByClass(pmc, false, IDENTITY, false) end)
+        if not okc then return fail("AddComponentByClass errored: " .. tostring(comp)) end
+        if not valid(comp) then return fail("AddComponentByClass gave nothing back") end
+        safe(function() comp:SetMobility(2) end)
         local ok, v, t, n = pcall(decodeSection, part.sec, part.two)
-        if not ok then
-            safe(function() actor:K2_DestroyActor() end)
-            log("bad mesh data: " .. tostring(v))
-            return nil
+        if not ok then return fail("bad mesh data: " .. tostring(v)) end
+        local col = part.collide ~= false
+        local okm, err = pcall(function() comp:CreateMeshSection_LinearColor(0, v, t, n, nil, nil, nil, col) end)
+        if not okm then
+            local ok2, err2 = pcall(function() comp:CreateMeshSection(0, v, t, n, nil, nil, nil, col) end)
+            if not ok2 then return fail("CreateMeshSection errored: " .. tostring(err) .. " / " .. tostring(err2)) end
         end
-        local made = safe(function() comp:CreateMeshSection_LinearColor(0, v, t, n, {}, {}, {}, part.collide ~= false) return true end)
-        if not made then
-            safe(function() actor:K2_DestroyActor() end)
-            log("couldn't build a mesh section")
-            return nil
+        local secs = safe(function() return comp:GetNumSections() end)
+        if secs ~= nil and secs < 1 then return fail("mesh section came out empty (" .. #v .. " verts, " .. #t .. " indices)") end
+        if not cur.meshLogged then
+            cur.meshLogged = true
+            log(("real shape ok: %d verts, %d indices, sections %s"):format(#v, #t, tostring(secs)))
         end
         if part.collide ~= false then
             safe(function() comp:SetCollisionProfileName(FName("BlockAll"), true) end)
+            safe(function() comp:SetCollisionEnabled(3) end)
         else
             safe(function() comp:SetCollisionEnabled(0) end)
         end
@@ -714,7 +734,8 @@ function M.load(file)
         sp.live = {}
         cur.spawners[#cur.spawners + 1] = sp
     end
-    for _, p in ipairs(b.parts or {}) do cur.queue[#cur.queue + 1] = p end
+    local parts = b.parts or {}
+    for k = #parts, 1, -1 do cur.queue[#cur.queue + 1] = parts[k] end
     for _, z in ipairs(b.zones or {}) do
         z.axes = axesFromRot(z.rot or { 0, 0, 0 })
         z.inside = false
@@ -927,9 +948,11 @@ local function spawnBatch(world)
     end
     local started = os.clock()
     while #cur.queue > 0 and (n < 4 or os.clock() - started < BUDGET) do
-        local part = table.remove(cur.queue, 1)
+        local part = table.remove(cur.queue)
         local actor = spawnPart(world, part)
-        if actor then
+        if actor == "skip" then
+            actor = nil
+        elseif actor then
             local sp = { actor = actor, part = part, axes = axesFromRot(part.rot or { 0, 0, 0 }), addr = addr(actor), cls = safe(function() return actor:GetClass():GetFName():ToString() end) }
             cur.spawned[#cur.spawned + 1] = sp
             if part.anim then cur.animated[#cur.animated + 1] = sp end

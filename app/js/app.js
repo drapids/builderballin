@@ -9,7 +9,7 @@ import { evalAnim } from './anim.js';
 import { MESHES } from './meshes.js';
 import { animate, fadeIn, SPRINGS, Spring, springCurve } from './spring.js';
 import { TEMPLATES } from './templates.js';
-import { loadSource, buildAsset, DEFAULTS, ACCEPT, unb64 } from './importers.js';
+import { loadSource, buildAsset, DEFAULTS, ACCEPT, unb64, blocksFromMesh } from './importers.js';
 import { openSearch } from './search.js';
 import { createHome, createGame } from './home.js';
 import { assetCount } from './voxels.js';
@@ -1795,6 +1795,12 @@ async function importModal(files, nameHint) {
         if (!asset) return;
         const ref = uid();
         asset.thumb = preview.thumb();
+        if (asset.kind === 'mesh') {
+          try {
+            const fb = buildAsset(src, { ...opt, build: 'blocks', res: src.kind === 'bsp' || opt.level ? 96 : 40, colors: Math.min(16, opt.colors), solid: src.kind !== 'bsp' && !opt.level });
+            asset.fallback = { palette: fb.palette, boxes: fb.boxes };
+          } catch {}
+        }
         state.map.assets = state.map.assets || {};
         state.map.assets[ref] = asset;
         saveLib(ref, asset);
@@ -2765,6 +2771,7 @@ function exportModal() {
     foot: '<button class="btn ghost" id="exCopy">Copy as text</button><button class="btn primary" id="exGo">Download .hbmap</button>',
     onMount: (el, close) => {
       $('#exGo', el).addEventListener('click', () => {
+        ensureFallbacks(state.map);
         const blob = new Blob([exportMap(state.map)], { type: 'application/json' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
@@ -3159,6 +3166,15 @@ function mapThumb(map, w = 480, h = 300) {
   return url;
 }
 
+function ensureFallbacks(map) {
+  for (const a of Object.values(map.assets || {})) {
+    if (a.kind !== 'mesh' || a.fallback) continue;
+    try {
+      a.fallback = blocksFromMesh(a, a.source === 'level' ? 96 : 40);
+    } catch {}
+  }
+}
+
 function countMap(map) {
   const fb = flatten(map);
   const rolling = fb.spawners.reduce((n, sp) => n + (sp.max || 0), 0);
@@ -3210,6 +3226,7 @@ function openAny() {
 
 async function saveDesk(asNew = false) {
   try {
+    ensureFallbacks(state.map);
     const p = await desk.file.save(exportMap(state.map), state.map.meta.name, asNew ? null : state.filePath);
     if (!p) return;
     state.filePath = p;
@@ -3255,7 +3272,7 @@ const home = createHome({
   openSetup: () => (game ? game.openSetup() : Promise.resolve(null)),
   savedName
 });
-const game = desk ? createGame({ html, esc, toast, modal, desk, validate, exportMap, state }) : null;
+const game = desk ? createGame({ html, esc, toast, modal, desk, validate, exportMap: (m) => (ensureFallbacks(m), exportMap(m)), state }) : null;
 
 function boot() {
   try {

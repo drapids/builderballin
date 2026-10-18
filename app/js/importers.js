@@ -777,3 +777,20 @@ function quantizeColors(colors, weights, k) {
   if (colors.length <= k) return { map: colors.map((_, i) => i), palette: colors };
   return quantize(colors, weights, k);
 }
+
+export function blocksFromMesh(a, res = 96) {
+  const tris = [];
+  for (const sec of a.sections) {
+    const qp = new Uint16Array(unb64(sec.p).buffer);
+    const idx = new Uint16Array(unb64(sec.i).buffer);
+    const b = sec.b;
+    const P = (k) => [b[0] + (qp[k * 3] / 65535) * (b[3] - b[0]), b[1] + (qp[k * 3 + 1] / 65535) * (b[4] - b[1]), b[2] + (qp[k * 3 + 2] / 65535) * (b[5] - b[2])];
+    const hexc = a.palette[sec.c] || '#9a9a96';
+    const n = parseInt(hexc.slice(1), 16);
+    const base = [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+    for (let i = 0; i + 2 < idx.length; i += 3) tris.push({ a: P(idx[i]), b: P(idx[i + 1]), c: P(idx[i + 2]), base });
+  }
+  const longest = Math.max(a.size[0], a.size[1], a.size[2]);
+  const v = voxelizeTris(tris, { res, colors: Math.min(16, a.palette.length), solid: false, size: longest }, { name: a.name, source: 'level' });
+  return { palette: v.palette, boxes: v.boxes };
+}

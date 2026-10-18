@@ -168,8 +168,13 @@ export function flatten(map) {
     if (piece.kind === 'import' && map.assets && map.assets[o.p.ref] && map.assets[o.p.ref].kind === 'mesh') {
       const a = map.assets[o.p.ref];
       a.sections.forEach((sec, i) => {
-        build.parts.push({ ...common, id: `${o.id}:m${i}`, kind: 'procmesh', pos: o.pos.slice(), rot: o.rot.slice(), scale: o.scale.slice(), color: a.palette[sec.c] || '#9a9a96', sec: { b: sec.b, p: sec.p, n: sec.n, i: sec.i }, two: !!a.twoSided, ice: o.look.ice, hidden: !o.look.visible, collide: o.look.collide });
+        build.parts.push({ ...common, id: `${o.id}:m${i}`, kind: 'procmesh', group: o.id, pos: o.pos.slice(), rot: o.rot.slice(), scale: o.scale.slice(), color: a.palette[sec.c] || '#9a9a96', sec: { b: sec.b, p: sec.p, n: sec.n, i: sec.i }, two: !!a.twoSided, ice: o.look.ice, hidden: !o.look.visible, collide: o.look.collide });
       });
+      if (a.fallback && a.fallback.boxes) {
+        assetParts({ palette: a.fallback.palette, boxes: a.fallback.boxes }).forEach((lp, i) => {
+          build.parts.push({ ...common, id: `${o.id}:f${i}`, kind: 'shape', shape: 'cube', fallbackFor: o.id, pos: add(o.pos, applyAxes(axes, hadamard(lp.pos, o.scale))), rot: o.rot.slice(), scale: hadamard(lp.scale, o.scale), color: lp.color, mat: null, ice: o.look.ice, hidden: !o.look.visible, collide: o.look.collide });
+        });
+      }
       continue;
     }
     const parts = piece.kind === 'import' ? (map.assets && map.assets[o.p.ref] ? assetParts(map.assets[o.p.ref]) : []) : localParts(o);
