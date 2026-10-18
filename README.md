@@ -8,7 +8,7 @@ A map editor for [Hyperballin](https://itch.io/search?q=hyperballin). Build a co
 
 You don't need [Hyperboi](https://github.com/drapids/Hyperboi) for any of this. If you do have it, both apps use the same map loader and the same map list, so maps you make here show up there too.
 
-**[Try it in the browser](https://drapids.github.io/Builderballin/)** (no game launching from the browser, export the map and drop it into Hyperboi instead).
+**[Try it in the browser](https://drapids.github.io/Hyperboi/builderballin/)** (no game launching from the browser, export the map and drop it into Hyperboi instead).
 
 <p align="center">
   <img src="docs/home.png" alt="The start screen with all the starter maps" width="880">
